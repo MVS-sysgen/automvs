@@ -15,6 +15,7 @@ and send an operator command::
 from automvs import automation
 cwd = os.getcwd()
 build = automation()
+build.ipl(clpa=False)
 try:
     print("Submitting {}/jcl/upload.jcl".format(cwd))
     with open("{}/jcl/upload.jcl".format(cwd),"r") as jcl:

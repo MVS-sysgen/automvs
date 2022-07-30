@@ -50,6 +50,7 @@ import logging
 
 cwd = os.getcwd()
 
+TIMEOUT = 1800 # Global time out 30 minutes
 
 error_check = [
                 'open error',
@@ -354,6 +355,9 @@ class automation:
         if msg:
             self.logger.debug('[AUTOMATION] Hercules has exited')
 
+    def wait_for_job(self, jobname, stderr=False, timeout=False):
+        self.wait_for_string("HASP250 {:<8} IS PURGED".format(jobname),stderr=stderr, timeout=timeout)
+
     def wait_for_string(self, string_to_waitfor, stderr=False, timeout=False):
         '''
            Reads stdout queue waiting for expected response, default is
@@ -363,7 +367,7 @@ class automation:
         time_started = time.time()
 
         if not timeout:
-            timeout = 1800
+            timeout = TIMEOUT
 
         if not timeout and self.timeout:
             timeout=self.timeout
@@ -372,13 +376,8 @@ class automation:
 
         while True:
             if time.time() > time_started + timeout:
-                if self.substep:
-                    exception = "Step: {} Substep: {} took too long".format(self.step, self.substep)
-                    log = "Step: {} Substep: {} Timeout Exceeded {} seconds".format(self.step, self.substep, timeout)
-                else:
-                    exception = "Step: {} Timeout".format(self.step, self.substep)
-                    log = "Step: {} Timeout Exceeded {} seconds".format(self.step, self.substep, timeout)
-                self.logger.debug(log)
+                exception = "Waiting for '{}' timed out after {} seconds".format(string_to_waitfor, timeout)
+                print("[AUTOMATION] {}".format(exception))
                 raise Exception(exception)
 
             try:
@@ -459,6 +458,22 @@ class automation:
 
         finally:
             sock.close()
+
+
+    def submit_and_check(self, jcl, host='127.0.0.1',port=3505, ebcdic=False, jobname=False):
+
+        if ebcdic and not jobname:
+            raise Exception("Auto detection of EBCDIC JCL jobname not support. Missing jobname=")
+
+        if not jobname:
+            self.logger.debug("[AUTOMATION] Getting job name from JCL")
+            jobname = jcl.split(" ")[0][2:]
+        
+        self.logger.debug("[AUTOMATION] Submitting {}".format(jobname))
+        self.submit(jcl, host=host,port=port, ebcdic=ebcdic)
+        self.wait_for_job(jobname)
+        self.check_maxcc(jobname)
+        
 
     def change_to_mvsce(self):
         self.logger.debug("[AUTOMATION] Changing to MVS/CE Folder {}".format(self.mvsce_location))

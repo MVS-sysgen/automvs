@@ -57,7 +57,8 @@ error_check = [
                 'Creating crash dump',
                 'DISASTROUS ERROR',
                 'HHC01023W Waiting for port 3270 to become free for console connections',
-                'disabled wait state 00020000 80000005'
+                'disabled wait state 00020000 80000005',
+                'invalid ipl psw 0000000000000'
               ]
 
 reply_num = 0

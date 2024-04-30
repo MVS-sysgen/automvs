@@ -479,3 +479,10 @@ class automation:
         self.logger.debug("[AUTOMATION] Changing to MVS/CE Folder {}".format(self.mvsce_location))
         os.chdir(self.mvsce_location)
 
+    def change_punchcard_output(self,path):
+        self.logger.debug("[AUTOMATION] Changing 3525 Punchcard output location to: '{}'".format(path))
+        if not os.path.exists(os.path.dirname(path)): 
+            self.logger.debug("[AUTOMATION] Punchcard folder '{}' does not exist".format(path))
+            raise Exception("Punchcard folder '{}' does no exist".format(path))
+        self.send_herc(command='detach d')
+        self.send_herc(command='attach d 3525 {} ebcdic'.format(path))

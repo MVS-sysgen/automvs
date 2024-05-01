@@ -235,7 +235,7 @@ class automation:
         self.logger.debug("[ERROR] - Hercules Exited Unexpectedly")
         os._exit(1)
 
-    def check_maxcc(self, jobname, steps_cc={}, printer_file='printers/prt00e.txt'):
+    def check_maxcc(self, jobname, steps_cc={}, printer_file='printers/prt00e.txt',ignore=False):
       '''Checks job and steps results, raises error
           If the step is in steps_cc, check the step vs the cc in the dictionary
           otherwise checks if step is zero
@@ -245,12 +245,16 @@ class automation:
             if you expect a specific step to have a return code other than zero.
          printer_file (str): location of the printer file from hercules that
             contains the job output.
+         ignore (bool): tells the function to ignore failed steps
+
+         returns: a list of dicts with 'jobname, procname, stepname, exitcode'
 
       '''
       self.logger.debug("[AUTOMATION] Checking {} job results".format(jobname))
 
       found_job = False
       failed_step = False
+      job_status = []
 
       logmsg = '[MAXCC] Jobname: {:<8} Procname: {:<8} Stepname: {:<8} Exit Code: {:<8}'
 
@@ -265,15 +269,28 @@ class automation:
                   j = x[y:]
 
                   log = logmsg.format(j[1],'',j[2],j[10])
+                  step_status = {
+                                    "jobname:" : j[1],
+                                    "procname": '',
+                                    "stepname": j[2],
+                                    "exitcode": j[10]
+                                }
                   maxcc=j[10]
                   stepname = j[2]
 
                   if j[3] != "-":
                       log = logmsg.format(j[1],j[2],j[3],j[11])
+                    step_status = {
+                                        "jobname:" : j[1],
+                                        "procname": j[2],
+                                        "stepname": j[3],
+                                        "exitcode": j[11]
+                                    }
                       stepname = j[3]
                       maxcc=j[11]
 
                   self.logger.debug(log)
+                  job_status.append(step_status)
 
                   if stepname in steps_cc:
                       expected_cc = steps_cc[stepname]
@@ -288,8 +305,10 @@ class automation:
       if not found_job:
           raise ValueError("Job {} not found in printer output {}".format(jobname, printer_file))
 
-      if failed_step:
+      if failed_step and not ignore:
           raise ValueError(error)
+        
+    return(job_status)
 
 
     def reset_hercules(self,clpa=False):

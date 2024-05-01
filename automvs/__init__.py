@@ -9,7 +9,7 @@ MVS Automation Python Library
     Using this library requires a recent version of hercules SDL and MVS/CE.
 """
 
-__version__ = '0.0.2'
+__version__ = '0.0.3'
 __author__ = 'Philip Young'
 __license__ = "GPL"
 
@@ -366,13 +366,13 @@ class automation:
         '''
         time_started = time.time()
 
-        if not timeout:
-            timeout = TIMEOUT
-
         if not timeout and self.timeout:
             timeout=self.timeout
 
-        self.logger.debug("[AUTOMATION] Waiting for string to appear in hercules log: {}".format(string_to_waitfor))
+        if not timeout:
+            timeout = TIMEOUT
+
+        self.logger.debug("[AUTOMATION] Waiting {} seconds for string to appear in hercules log: {}".format(timeout,string_to_waitfor))
 
         while True:
             if time.time() > time_started + timeout:

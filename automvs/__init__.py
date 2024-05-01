@@ -9,7 +9,7 @@ MVS Automation Python Library
     Using this library requires a recent version of hercules SDL and MVS/CE.
 """
 
-__version__ = '0.0.3'
+__version__ = '0.0.4'
 __author__ = 'Philip Young'
 __license__ = "GPL"
 

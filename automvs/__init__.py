@@ -9,7 +9,7 @@ MVS Automation Python Library
     Using this library requires a recent version of hercules SDL and MVS/CE.
 """
 
-__version__ = '0.0.5'
+__version__ = '0.0.7-3'
 __author__ = 'Philip Young'
 __license__ = "GPL"
 
@@ -270,7 +270,7 @@ class automation:
 
                   log = logmsg.format(j[1],'',j[2],j[10])
                   step_status = {
-                                    "jobname:" : j[1],
+                                    "jobname" : j[1],
                                     "procname": '',
                                     "stepname": j[2],
                                     "exitcode": j[10]
@@ -280,8 +280,8 @@ class automation:
 
                   if j[3] != "-":
                       log = logmsg.format(j[1],j[2],j[3],j[11])
-                    step_status = {
-                                        "jobname:" : j[1],
+                      step_status = {
+                                        "jobname" : j[1],
                                         "procname": j[2],
                                         "stepname": j[3],
                                         "exitcode": j[11]
@@ -299,7 +299,11 @@ class automation:
 
                   if maxcc != expected_cc:
                       error = "Step {} Condition Code does not match expected condition code: {} vs {} review prt00e.txt for errors".format(stepname,j[-1],expected_cc)
-                      self.logger.error(error)
+                      if ignore:
+                        self.logger.debug(error)
+                      else:
+                        self.logger.error(error)
+                        
                       failed_step = True
 
       if not found_job:
@@ -308,7 +312,7 @@ class automation:
       if failed_step and not ignore:
           raise ValueError(error)
         
-    return(job_status)
+      return(job_status)
 
 
     def reset_hercules(self,clpa=False):
@@ -354,8 +358,8 @@ class automation:
         quit_herc_event.clear()
         self.start_threads()
 
-        self.rc = self.hercproc.poll()
-        if self.rc is not None:
+        rc = self.hercproc.poll()
+        if rc is not None:
             raise("[AUTOMATION] Unable to start hercules")
         self.logger.debug("[AUTOMATION] Hercules launched")
         #self.write_logs()

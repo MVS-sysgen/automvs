@@ -7,7 +7,7 @@ def read_file(filename):
 
 setup(
     name='automvs',
-    version='0.0.7-3',    
+    version='0.0.8',    
     description='Python library for MVS/CE automation',
     url='https://github.com/MVS-sysgen/automvs',
     author='Philip Young',

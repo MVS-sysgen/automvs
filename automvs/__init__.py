@@ -10,7 +10,7 @@ MVS Automation Python Library
     TK4-/TK5 for those MVS3.8j.
 """
 
-__version__ = '0.0.8'
+__version__ = '0.0.9'
 __author__ = 'Philip Young'
 __license__ = "GPL"
 
@@ -500,6 +500,52 @@ class mvs:
                 continue
             
 
+    def wait_for_strings(self, strings_to_waitfor, stderr=False, timeout=False):
+        '''
+           Reads stdout queue waiting for expected response, default is
+           to check STDOUT queue, set stderr=True to check stderr queue instead
+           default timeout is 30 minutes.and
+
+           Unlike wait_for_string() this function takes a list of strings
+           and returns when any of the strings in the list are found. 
+        '''
+        time_started = time.time()
+
+        if not timeout and self.timeout:
+            timeout=self.timeout
+
+        if not timeout:
+            timeout = TIMEOUT
+
+        self.logger.debug("[AUTOMATION: MVS/CE] Waiting {} seconds for string to appear in hercules log: {}".format(timeout,strings_to_waitfor))
+
+        while True:
+            if time.time() > time_started + timeout:
+                exception = "Waiting for one of '{}' timed out after {} seconds".format(strings_to_waitfor, timeout)
+                print("[AUTOMATION: MVS/CE] {}".format(exception))
+                raise Exception(exception)
+
+            try:
+                if stderr:
+                    line = self.stderr_q.get(False).strip()
+                else:
+                    line = self.stdout_q.get(False).strip()
+                while not any(word in line for word in strings_to_waitfor):
+                    if stderr:
+                        line = self.stderr_q.get(False).strip()
+                    else:
+                        line = self.stdout_q.get(False).strip()
+                    continue
+                for word in strings_to_waitfor:
+                    if word in line:
+                        break
+                return word
+
+            except queue.Empty:
+                #self.logger.debug("Empty Queue")
+                continue
+            
+
     def ipl(self, step_text='', clpa=False):
         self.logger.debug(step_text)
         self.reset_hercules(clpa=clpa)
@@ -672,6 +718,28 @@ class turnkey:
             new_lines = self.read_log_lines()
             for line in new_lines:
                 if string_to_waitfor in line:
+                    return
+
+
+
+    def wait_for_strings(self,strings_to_waitfor):
+        '''
+        Unlike string to wait for this function 
+        '''
+        self.logger.debug(f"[AUTOMATION: {self.system}] Waiting for any of these strings '{strings_to_waitfor}' in {self.logfile}")
+        time_started = time.time()
+
+        self.logger.debug(f"[AUTOMATION: {self.system}] Waiting {self.timeout} seconds for strings to appear in hercules log: {strings_to_waitfor}")
+
+        while True:
+            if time.time() > time_started + self.timeout:
+                exception = f"Waiting for any of the strings timed out after {self.timeout} seconds"
+                print("[ERR] {}".format(exception))
+                raise Exception(exception)
+
+            new_lines = self.read_log_lines()
+            for line in new_lines:
+                if any(word in line for word in strings_to_waitfor):
                     return
 
     def wait_for_job(self, jobname):

@@ -10,7 +10,7 @@ MVS Automation Python Library
     TK4-/TK5 for those MVS3.8j.
 """
 
-__version__ = '0.0.9'
+__version__ = '0.0.9-2'
 __author__ = 'Philip Young'
 __license__ = "GPL"
 
@@ -724,7 +724,7 @@ class turnkey:
 
     def wait_for_strings(self,strings_to_waitfor):
         '''
-        Unlike string to wait for this function 
+        Unlike string to wait for this function takes a list of strings and returns when any of them hit
         '''
         self.logger.debug(f"[AUTOMATION: {self.system}] Waiting for any of these strings '{strings_to_waitfor}' in {self.logfile}")
         time_started = time.time()
@@ -739,8 +739,9 @@ class turnkey:
 
             new_lines = self.read_log_lines()
             for line in new_lines:
-                if any(word in line for word in strings_to_waitfor):
-                    return
+                for word in strings_to_waitfor:
+                    if word in line:
+                        return word
 
     def wait_for_job(self, jobname):
         self.wait_for_string("HASP250 {:<8} IS PURGED".format(jobname))

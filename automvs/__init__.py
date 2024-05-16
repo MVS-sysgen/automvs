@@ -10,7 +10,7 @@ MVS Automation Python Library
     TK4-/TK5 for those MVS3.8j.
 """
 
-__version__ = '0.0.9-2'
+__version__ = '0.1.0'
 __author__ = 'Philip Young'
 __license__ = "GPL"
 
@@ -44,6 +44,8 @@ import time
 import subprocess
 import threading
 import queue
+import base64
+import select
 import socket
 from pathlib import Path
 import logging
@@ -96,8 +98,25 @@ class automation:
                  web_port=8038,
                  timeout=TIMEOUT,
                  username='HERC01',
-                 password='CUL8TR'
+                 password='CUL8TR',
+                 remote=False,
+                 remote_port=3702
                 ):
+        
+        if remote:
+            return(
+                remote_mvs(
+                 system=system, 
+                 ip=ip,
+                 punch_port=punch_port,
+                 automvs_port=remote_port,
+                 web_port=web_port,
+                 loglevel=loglevel,
+                 timeout=timeout,
+                 username=username,
+                 password=password
+                )
+            )
     
         if 'MVSCE' in system.upper():
 
@@ -967,3 +986,322 @@ class turnkey:
         print_maxcc(results)
         self.send_herc('/$da')
         self.send_oper('$da')
+
+class remote_mvs:
+
+    def __init__(self,
+                 system="TK5", 
+                 ip='127.0.0.1',
+                 punch_port=3505,
+                 automvs_port=3702,
+                 web_port=8038,
+                 loglevel=logging.WARNING,timeout=300,
+                 username='HERC01',
+                 password='CUL8TR'
+                ):
+        
+        self.system = system
+        self.ip = ip
+        self.port = automvs_port
+        self.timeout = timeout
+        self.username = username
+        self.password = password
+        self.socket = None
+        self.loglevel = logging.getLevelName(loglevel)
+        self.current_job = {} # dict with jobname and jobnum
+
+        # Create the Logger
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.DEBUG)
+        logger_formatter = logging.Formatter(
+            '%(levelname)s :: %(funcName)s :: %(message)s')
+
+        # Log to stderr
+        ch = logging.StreamHandler()
+        ch.setFormatter(logger_formatter)
+        ch.setLevel(loglevel)
+        if not self.logger.hasHandlers():
+            self.logger.addHandler(ch)
+
+        self.punch_port = punch_port
+        self.web_port = web_port
+
+        self.logger.debug(f"[AUTOMATION: {self.ip}:{self.port}] Starting Automation")
+        self.check_ports()
+        self.connect()
+
+    def connect(self):
+        self.logger.debug(f"[AUTOMATION: {self.ip}:{self.port}] Connecting to {self.ip}:{self.port}")
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket.connect((self.ip, self.port))
+        
+        self.logger.debug(f"[AUTOMATION: {self.ip}:{self.port}] Connection done")
+
+        self.wait_for_socket('Please /LOGON to continue',timeout=5)
+
+        self.send_automvs(f"/LOGON {self.username} {self.password}")
+
+        self.wait_for_socket('LOGON OK',error_string='Logon Failed:')
+        
+
+
+    def wait_for_socket(self,end_string,start_string=False, error_string="Error:",timeout=False):
+
+        if not timeout:
+            timeout = self.timeout
+        if not timeout:
+            timeout = TIMEOUT
+
+        self.logger.debug(f"[AUTOMATION: {self.ip}:{self.port}] Waiting {timeout} seconds for '{end_string}'")
+
+        collector = []
+        time_started = time.time()
+
+        while True:
+            if time.time() > time_started + timeout:
+                exception = f"Waiting for '{end_string}' timed out after {self.timeout} seconds"
+                print("[ERR] {}".format(exception))
+                raise Exception(exception)
+            
+            line = self.read_automvs(timeout=timeout)
+            #self.logger.debug(f"[AUTOMATION: {self.ip}:{self.port}] received {line}")
+
+            if start_string and start_string in line:
+                continue
+
+            if end_string in line:
+                break
+            
+            if error_string in line:
+                raise Exception(f"Error from {self.ip}:{self.port}: {line}")
+            
+            collector.append(line.strip())
+        
+        return collector
+
+    def read_automvs(self,timeout=False):
+        if not self.socket:
+            raise Exception("Read attempted on closed socket")
+        
+        if not timeout:
+            timeout = self.timeout
+
+        if not timeout:
+            timeout = TIMEOUT
+
+        char = data = b""
+
+        try:
+            self.socket.setblocking(0)  # Set non-blocking mode
+            data = ""
+            while True:
+                ready = select.select([self.socket], [], [], timeout)
+                if len(ready[0]) == 0:
+                    raise TimeoutError("Receive timeout")
+                
+                byte = self.socket.recv(1).decode()
+                # if not byte:  # If no more data available, break the loop
+                #     break
+                if byte == "\n":
+                    break
+                data += byte
+                
+            self.logger.debug(f"[AUTOMATION: {self.ip}:{self.port}] Received {len(data)} bytes: {data}")
+            return data
+        except BlockingIOError:
+            return ""
+        finally:
+            self.socket.setblocking(1) 
+
+        # while char != b"\n":
+        #     char = self.socket.recv(1)
+        #     data = data + char
+        # data = data.decode().strip()
+
+        # return data
+    
+    def send_automvs(self,command):
+        if not self.socket:
+            self.connect()
+        self.logger.debug(f"[AUTOMATION: {self.ip}:{self.port}] Sending: {command}")
+        self.socket.sendall(command.encode('ascii'))
+
+    def disconnect(self):
+        self.send_automvs("/QUIT")
+        self.socket.close()
+        self.socket = None
+        self.logger.debug(f"[AUTOMATION: {self.ip}:{self.port}] Disconnected")
+
+    def check_ports(self):
+        self.logger.debug(f"[AUTOMATION: {self.ip}:{self.port}] Checking if {self.system} ports are available")
+        self.check_port(self.ip,self.punch_port)
+        self.check_port(self.ip,self.web_port)
+        self.check_port(self.ip,self.port)
+
+    def check_port(self, ip, port):
+        self.logger.debug(f"[AUTOMATION: {self.ip}:{self.port}] Checking {ip}:{port}")
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(2)  # Set a timeout for the connection attempt
+
+    def change_punchcard_output(self,path,are_u_sure=False):
+        '''
+        Changes the punch out device `d` to the specified path
+
+        Args:
+
+            path: str the path for the new punch card
+            are_u_sure: bool since this is remote we only change it if this is true
+        '''
+        if not are_u_sure:
+            self.logger.debug("are_u_sure variable set to False. Not changing punch out location")
+        else:
+            self.logger.debug(f"[AUTOMATION: {self.ip}:{self.port}] Changing 3525 Punchcard output location to: '{path}'")
+            self.send_herc(command='detach d')
+            self.send_herc(command=f'attach d 3525 {path} ebcdic')
+    
+    def __remote_wait_for(self, wait_for_it, timeout=False):
+
+        if not timeout and self.timeout:
+            timeout=self.timeout
+
+        if not timeout:
+            timeout = TIMEOUT
+
+        self.logger.debug(f"[AUTOMATION: {self.ip}:{self.port}] Waiting for '{wait_for_it}'")
+
+        self.logger.debug(f"[AUTOMATION: {self.ip}:{self.port}] Waiting {self.timeout} seconds for string to appear in hercules log: {wait_for_it}")
+
+        self.send_automvs(f"{wait_for_it}")
+
+        self.wait_for_socket('--- DONE',timeout=timeout)
+    
+    def wait_for_string(self, string_to_waitfor, stderr=False, timeout=False):
+        self.__remote_wait_for(string_to_waitfor,timeout=timeout)
+    
+    def wait_for_job(self, jobname, stderr=False, timeout=False,debug=False):
+        if debug or self.loglevel == 'DEBUG':
+            self.__remote_wait_for(f"/JOB {jobname} DEBUG",timeout=timeout)
+        else:
+            self.__remote_wait_for(f"/JOB {jobname}",timeout=timeout)
+    
+    def check_maxcc(self, jobname, steps_cc={}, ignore=False, keep=False):
+        self.logger.debug(f"[AUTOMATION: {self.ip}:{self.port}] Checking {jobname} job results")
+
+        failed_step = False
+        job_status = []
+        log = None
+
+        self.send_automvs(f"/JOB {jobname}")
+
+        lines = []
+
+        lines = self.wait_for_socket('--- DONE',start_string='--- Job Results')
+
+        if len(lines) == 0:
+            raise Exception('No results from job in log, check printer output for errors')
+
+        logmsg = '[MAXCC] Jobname: {:<8} Procname: {:<8} Stepname: {:<8} Progname: {:<8} Exit Code: {:<8}'
+        for line in lines:
+            if len(line.split(',')) < 6:
+                raise Exception("Line from automvs too short: {line}")
+            num, name, step, proc, prog, cc = line.split(',')
+            self.current_job = {'jobnum': num, 'jobname': name}
+            
+            logmsg = '[MAXCC] Jobnum: {:<4} Jobname: {:<8} Procname: {:<8} Stepname: {:<8} Progname: {:<8} Exit Code: {:<8}'
+
+            log = logmsg.format(num,name,proc,step,prog,cc)
+            step_status = {
+                            "jobnum"   : num,
+                            "jobname:" : name,
+                            "procname": proc,
+                            "stepname": step,
+                            "progname": prog,
+                            "exitcode": cc
+                        }
+            maxcc=cc
+            stepname = step
+
+            self.logger.debug(log)
+            job_status.append(step_status)
+
+            if stepname in steps_cc:
+                expected_cc = steps_cc[stepname]
+            else:
+                expected_cc = '0000'
+
+            if maxcc != expected_cc and maxcc != "*FLUSH*":
+                error = "[MAXCC] Step {} Condition Code does not match expected condition code: {} vs {} review prt00e.txt for errors".format(stepname,cc,expected_cc)
+                if ignore:
+                    self.logger.debug(error)
+                else:
+                    self.logger.error(error)
+                failed_step = True
+
+        if failed_step and not ignore:
+            self.logger.error(f"Job Failed with maxcc: {maxcc}")
+            print_maxcc(job_status)
+            raise ValueError(error)
+        
+        if not keep:
+            self.purge(self.current_job['jobnum'],self.current_job['jobname'])
+            
+        return(job_status)
+    
+    def purge(self, jobnum=False, jobname=False):
+        self.logger.debug(f"Purging job {jobname} #{jobnum}")
+        self.send_automvs(f"/PURGE {jobnum} {jobname}")
+        self.wait_for_socket('--- DONE')
+
+
+        
+    def get_file(self,dsn,out_file,timeout=False):
+        '''
+        Using Automvs rexx script get a file
+        '''
+
+        self.send_automvs(f'/FILE {dsn}')
+        lines = self.wait_for_socket('--- DONE',start_string='--- Sending BASE64 Encoded File')
+    
+        b64_file = ''.join(lines)
+        self.logger.debug(f"[AUTOMATION: {self.ip}:{self.port}] Decoding Base64 file - {len(b64_file)} bytes")
+        file = base64.b64decode(b64_file)
+        self.logger.debug(f"[AUTOMATION: {self.ip}:{self.port}] File Decoded - {len(file)} bytes")
+        self.logger.debug(f"[AUTOMATION: {self.ip}:{self.port}] Writing file to: {out_file}")
+
+        with open(out_file,'wb') as binary_out:
+            binary_out.write(file)
+    
+    def hercules_web_command(self,command=''):
+        raise Exception("Hercules Web not supported in remote mode")
+
+    def send_herc(self, command='uptime'):
+        ''' Sends hercules commands '''
+        self.logger.debug(f"[AUTOMATION: {self.ip}] Sending Hercules Command: {command}")
+        self.send_automvs(f'/HERCULES {command}')
+        self.wait_for_socket('--- DONE')       
+
+
+    def send_oper(self, command=''):
+        ''' Sends operator/console commands (i.e. prepends /) '''
+        self.logger.debug(f"[AUTOMATION: {self.ip}] Sending Operator command: /{command}")
+        self.send_automvs(f'/OPER {command}')
+        self.wait_for_socket('--- DONE')   
+
+    def submit(self,jcl, ebcdic=False, port=None):
+        self.logger.debug(f"[AUTOMATION: {self.ip}] Submitting JCL host={self.ip} port={self.punch_port} EBCDIC={ebcdic}")
+        #print(jcl)
+
+        if not port:
+            port = self.punch_port 
+
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            # Connect to server and send data
+            sock.connect((self.ip, port))
+            if ebcdic:
+              sock.send(jcl)
+            else:
+              sock.send(jcl.encode())
+
+        finally:
+            sock.close()

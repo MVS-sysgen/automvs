@@ -357,7 +357,7 @@ class mvs:
       logmsg = '[MAXCC] Jobname: {:<8} Procname: {:<8} Stepname: {:<8} Exit Code: {:<8}'
 
       with open(printer_file, 'r', errors='ignore') as f:
-          for line in f.readlines():
+          for line in f.readlines(errors='ignore'):
               if 'IEF142I' in line and jobname in line:
 
                   found_job = True
@@ -785,7 +785,7 @@ class turnkey:
             file.seek(self.log_last_size)
             
             # Read new lines
-            new_lines = file.readlines()
+            new_lines = file.readlines(errors='ignore')
 
             for line in new_lines:
                 self.logger.debug(f"[LOG] {line.strip()}")
@@ -808,7 +808,7 @@ class turnkey:
             file.seek(self.prt_last_size)
             
             # Read new lines
-            new_lines = file.readlines()
+            new_lines = file.readlines(errors='ignore')
 
             # if self.prt_last_size > 0 :
             #     for line in new_lines:
@@ -1033,7 +1033,7 @@ class remote_mvs:
     def connect(self):
         self.logger.debug(f"[AUTOMATION: {self.ip}:{self.port}] Connecting to {self.ip}:{self.port}")
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.connect((self.ip, self.port))
+        self.socket.connect((self.ip, int(self.port)))
         
         self.logger.debug(f"[AUTOMATION: {self.ip}:{self.port}] Connection done")
 

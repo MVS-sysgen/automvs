@@ -357,7 +357,7 @@ class mvs:
       logmsg = '[MAXCC] Jobname: {:<8} Procname: {:<8} Stepname: {:<8} Exit Code: {:<8}'
 
       with open(printer_file, 'r', errors='ignore') as f:
-          for line in f.readlines(errors='ignore'):
+          for line in f.readlines():
               if 'IEF142I' in line and jobname in line:
 
                   found_job = True
@@ -775,7 +775,7 @@ class turnkey:
 
     def read_log_lines(self):
         #self.logger.debug(f"reading {self.logfile}")
-        with open(self.logfile, "r") as file:
+        with open(self.logfile, "r",errors='ignore') as file:
             # Check if the last_size attribute exists in the instance
             if not hasattr(self, 'log_last_size'):
                 # If not, initialize it to 0
@@ -785,7 +785,7 @@ class turnkey:
             file.seek(self.log_last_size)
             
             # Read new lines
-            new_lines = file.readlines(errors='ignore')
+            new_lines = file.readlines()
 
             for line in new_lines:
                 self.logger.debug(f"[LOG] {line.strip()}")
@@ -808,7 +808,7 @@ class turnkey:
             file.seek(self.prt_last_size)
             
             # Read new lines
-            new_lines = file.readlines(errors='ignore')
+            new_lines = file.readlines()
 
             # if self.prt_last_size > 0 :
             #     for line in new_lines:

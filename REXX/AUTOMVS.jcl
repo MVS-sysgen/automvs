@@ -1,5 +1,4 @@
-//AUTOMVS PROC PORT='9856',DEBUG='',
-//             LIB='BREXX.V2R5M3.RXLIB'
+//AUTOMVS PROC PORT='9856',DEBUG='',TIMEOUT=60
 //* *********************************************
 //*
 //*  This is the procedure to run automvs
@@ -16,10 +15,9 @@
 //*
 //* *********************************************
 //EXEC     EXEC PGM=IKJEFT01,
-//         PARM='BREXX EXEC &DEBUG -port &PORT',REGION=8192K
+//         PARM='BREXX EXEC &DEBUG -port &PORT -timeout &TIMEOUT',
+//         REGION=8192K
 //EXEC     DD  DSN=SYS2.EXEC(AUTOMVS),DISP=SHR
-//TSOLIB   DD  DSN=&LIB,DISP=SHR
-//RXLIB    DD  DSN=&LIB,DISP=SHR
 //STDIN    DD  DUMMY
 //STDOUT   DD  SYSOUT=*,DCB=(RECFM=FB,LRECL=140,BLKSIZE=5600)
 //STDERR   DD  SYSOUT=*,DCB=(RECFM=FB,LRECL=140,BLKSIZE=5600)

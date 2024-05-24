@@ -47,6 +47,7 @@ import queue
 import base64
 import select
 import socket
+import codecs
 from pathlib import Path
 import logging
 
@@ -1039,7 +1040,7 @@ class remote_mvs:
 
         self.wait_for_socket('Please /LOGON to continue',timeout=5)
 
-        self.send_automvs(f"/LOGON {self.username} {self.password}")
+        self.send_automvs("/LOGON {user} {passw}".format(user=self.username,passw=self.__hash__(self.password)))
 
         self.wait_for_socket('LOGON OK',error_string='Logon Failed:')
         
@@ -1066,6 +1067,9 @@ class remote_mvs:
             line = self.read_automvs(timeout=timeout)
             #self.logger.debug(f"[AUTOMATION: {self.ip}:{self.port}] received {line}")
 
+            if '*JOBLOG*' in line:
+                continue
+
             if start_string and start_string in line:
                 continue
 
@@ -1089,25 +1093,26 @@ class remote_mvs:
         if not timeout:
             timeout = TIMEOUT
 
-        char = data = b""
+        data = b""
 
         try:
             self.socket.setblocking(0)  # Set non-blocking mode
-            data = ""
+            data = b""
             while True:
                 ready = select.select([self.socket], [], [], timeout)
                 if len(ready[0]) == 0:
                     raise TimeoutError("Receive timeout")
                 
-                byte = self.socket.recv(1).decode()
-                # if not byte:  # If no more data available, break the loop
-                #     break
-                if byte == "\n":
+                byte = self.socket.recv(1)
+                if byte == b"\n":
                     break
                 data += byte
                 
-            self.logger.debug(f"[AUTOMATION: {self.ip}:{self.port}] Received {len(data)} bytes: {data}")
-            return data
+            # self.logger.debug(f"[AUTOMATION: {self.ip}:{self.port}] Received {len(data)} bytes: {data.hex()}")
+            _d = data.decode(encoding="ascii", errors="ignore")
+            self.logger.debug(f"[AUTOMATION: {self.ip}:{self.port}] Received: {_d}")
+            
+            return data.decode(encoding="ascii", errors="ignore")
         except BlockingIOError:
             return ""
         finally:
@@ -1119,6 +1124,18 @@ class remote_mvs:
         # data = data.decode().strip()
 
         # return data
+
+    def __hash__(self,password):
+        # Convert the string to EBCDIC bytes
+        ebcdic_bytes = codecs.encode(password.upper(), 'cp037')
+        
+        # Calculate the hash using the EBCDIC bytes
+        hashCode = 0
+        for byte in ebcdic_bytes:
+            hashCode = (hashCode * 31 + byte) & (2**32 - 1)  # unsigned
+        if hashCode & 2**31:
+            hashCode -= 2**32  # make it signed
+        return hashCode
     
     def send_automvs(self,command):
         if not self.socket:
@@ -1179,10 +1196,14 @@ class remote_mvs:
         self.__remote_wait_for(string_to_waitfor,timeout=timeout)
     
     def wait_for_job(self, jobname, stderr=False, timeout=False,debug=False):
+        
+        if not timeout:
+            timeout = self.timeout
+
         if debug or self.loglevel == 'DEBUG':
-            self.__remote_wait_for(f"/JOB {jobname} DEBUG",timeout=timeout)
+            self.__remote_wait_for(f"/JOB {jobname} DEBUG TIMEOUT={timeout}",timeout=timeout)
         else:
-            self.__remote_wait_for(f"/JOB {jobname}",timeout=timeout)
+            self.__remote_wait_for(f"/JOB {jobname} TIMEOUT={timeout}",timeout=timeout)
     
     def check_maxcc(self, jobname, steps_cc={}, ignore=False, keep=False):
         self.logger.debug(f"[AUTOMATION: {self.ip}:{self.port}] Checking {jobname} job results")
@@ -1203,7 +1224,7 @@ class remote_mvs:
         logmsg = '[MAXCC] Jobname: {:<8} Procname: {:<8} Stepname: {:<8} Progname: {:<8} Exit Code: {:<8}'
         for line in lines:
             if len(line.split(',')) < 6:
-                raise Exception("Line from automvs too short: {line}")
+                raise Exception(f"Line from automvs too short: {line}")
             num, name, step, proc, prog, cc = line.split(',')
             self.current_job = {'jobnum': num, 'jobname': name}
             
@@ -1219,7 +1240,7 @@ class remote_mvs:
                             "exitcode": cc
                         }
             maxcc=cc
-            stepname = step
+            stepname = step.strip()
 
             self.logger.debug(log)
             job_status.append(step_status)
@@ -1297,7 +1318,7 @@ class remote_mvs:
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             # Connect to server and send data
-            sock.connect((self.ip, port))
+            sock.connect((self.ip, int(port)))
             if ebcdic:
               sock.send(jcl)
             else:

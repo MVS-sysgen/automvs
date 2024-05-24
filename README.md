@@ -62,3 +62,53 @@ finally:
     if mvs_type == 'MVSCE'
         build.quit_hercules()
 ```
+
+## Remote Automation
+
+This library also supports remote automation through the use of a rexx script
+available at https://github.com/MVS-sysgen/automvs/tree/main/REXX. Example usage
+of that script:
+
+
+```python
+
+import sys
+from automvs import automation
+
+if len(sys.argv) != 2:
+    print("Usage: python go_mvs.py <MVS system> username password")
+    print(" MVS system: one of MVSCE, TK4- or TK5\n MVS PATH: /path/to/the/system. E.g. /home/test/mvs/tk4-")
+    sys.exit(1)
+
+mvs_type = sys.argv[1]
+username = sys.argv[3]
+password = sys.argv[4]
+punch_port = 3505
+ip = '127.0.0.1'
+remote_port = 9856
+
+build = automation(
+                    system=mvs_type,
+                    ip = ip,
+                    punch_port = punch_port,
+                    username=username,
+                    password=password,
+                    remote_port = remote_port
+                  )
+
+cwd = os.getcwd()
+
+try:
+    print("Submitting {}/jcl/upload.jcl".format(cwd))
+    with open("{}/jcl/upload.jcl".format(cwd),"r") as jcl:
+        build.submit(jcl.read())
+    build.wait_for_job("UPLOAD")
+    build.check_maxcc("UPLOAD")
+    build.send_herc('devinit 170 tape/zdlib1.het')
+    build.wait_for_string("IEF238D SMP4P44 - REPLY DEVICE NAME OR 'CANCEL'.")
+    build.send_reply('170')
+    build.send_oper("$DU")
+finally:
+    if mvs_type == 'MVSCE'
+        build.quit_hercules()
+```

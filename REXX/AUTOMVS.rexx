@@ -3,30 +3,7 @@
 /* returning a base64 encoded version of any file and returning the   */
 /* job log                                                            */
 
-VERSION = '0.0.5'
-
-/* When launching the script optional arguments are: -port - the port */
-/* to use (default 3207), -timeout (default 60 seconds), the timeout  */
-/* to read the socket, and an optional DEBUG flag (default False). You*/
-/* can specify one, all or none of these arguments.                   */
-
-
-/* /LOGON: Takes a username and password, this user and password must */
-/*        be in the RAKF database to use this script and be in the    */
-/*        ADMIN group                                                 */
-/*        e.g. /LOGON HERC01 CUL8TR                                   */
-/*        Returns 'OK!' if logon is succesful                         */
-
-/* /JOB: Take a job name or jobnum and return the results of each     */
-/* step. The format of the return is a CSV with jobnum, jobname,      */
-/* stepname, progname and rc. If the optional 'DEBUG' argument is     */
-/* passed the console log returned as well.                           */
-/*       e.g. /JOB jobname or /JOB jobname DEBUG                      */
-
-/* /FILE <filename>: returns a file as a base64 encoded string can be */
-/* either a sequential file or a member of a PDS                      */
-/*       e.g. /FILE TESTING.TEST(MEMBER)                              */
-/*            /FILE THIS.IS.A.TEST                                    */
+VERSION = '1.0.0'
 
 parse arg arguments
 call argparse arguments
@@ -37,11 +14,14 @@ call log 'Running as user' userid()
  /* Globals */
 /*         */
 
-attempts = 0
-logon = 0
-connected = 0
+attempts = 0               /* Logon Attempts        */
+logon = 0                 /* Is someone logged on  */
+connected = 0            /* Is someone connected? */
+max_file_size = 1500000 /* We run out of memory when files are too big */
 
-/* Call TCPSF to start the server */
+  /*                                */
+ /* Call TCPSF to start the server */
+/*                                */
 
 call TCPSF port,timeout,'AUTOMVS','ERROR'
 exit 0
@@ -101,15 +81,26 @@ TCPData:
       parse var values jobname sendlog .
       call verbose 'TCPData: Checking job' values
       if check_logon(#fd '/JOB') then do
-        parse var values jobname sendlog .
+        parse var values jobname job_args
 
-        if upper(sendlog) = 'DEBUG' then do
-          call verbose 'TCPData:' #fd '/JOB - Detailed log requested'
-          sendlog = 1
+        do while job_args \= ''
+          parse var job_args _carg job_args
+          
+          if pos('DEBUG', upper(_carg)) > 0 then do
+            call verbose 'TCPData:' #fd '/JOB - Detailed log requested'
+            job_debug = 1
+          end
+
+          if pos('TIMEOUT=',upper(_carg)) > 0 then do
+            call verbose 'Setting' _carg
+            _oldtimeout = timeout
+            parse var _carg . '=' timeout
+          end
         end
 
         if length(jobname) > 0 then do
-          call check_job #fd jobname sendlog
+          call check_job #fd jobname job_debug
+          timeout = _oldtimeout
         end
         else do
           call send #fd '/JOB requires a jobname'
@@ -134,6 +125,9 @@ TCPData:
           call CONSOLE('$P J'purge_jobnum)
           call send #fd '--- DONE'
         end
+        else do
+          call send #fd 'Error: Job number required for /PURGE:' purge_jobnum
+        end
       end
     end
 
@@ -147,8 +141,8 @@ TCPData:
         CALL PRIVILEGE('OFF')
         call outtrap('off')
         call send #fd '--- Log for oper command:' values
-        do i=1 to herc_command.0
-          call send #fd herc_command.i
+        do i=1 to herc_console.0
+          call send #fd herc_console.i
         end 
         call send #fd '--- DONE'
       end
@@ -176,20 +170,27 @@ TCPData:
         BIN_FILE = ''
         call verbose 'TCPData: Fetching requested dataset' dsn
         dsn_hndl = OPEN("'"dsn"'",'RB,VMODE=2,UMODE=0','DSN')
+
         IF dsn_hndl = -1 THEN DO
-                rmsg = "Error: opening file '"dsn"'"
-                call log rmsg
-                call send #fd rmsg
+          rmsg = "Error: opening file '"dsn"'"
+          call log rmsg
+          call send #fd rmsg
         END
-        else do
-          DO UNTIL EOF(dsn_hndl)=1
-            BIN_FILE = BIN_FILE || READ(dsn_hndl)
-          END
+        else if check_file_size(dsn_hndl) then do 
+          rmsg = "Error: '"dsn"' size "_size" is larger than the",
+                 "maximum allowed file size of "max_file_size
+          call log rmsg
+          call send #fd rmsg
           R = CLOSE(dsn_hndl)
+        end
+        else do
+          CALL seek dsn_hndl,0,"TOF" 
+          BIN_FILE = BIN_FILE''READ(dsn_hndl,'F') /* Read the whole file */          
           call log "Sending '"dsn"' Size: " length(BIN_FILE)
           call send #fd '--- Sending BASE64 Encoded File'
           call send #fd BASE64ENC(BIN_FILE)
           call send #fd '--- DONE'
+          R = CLOSE(dsn_hndl)
         end
       end
     end
@@ -208,9 +209,8 @@ return 8     /* stop Server       */
 send:
     parse arg #fd msg
     call verbose 'send: ('#fd') Sending ' length(msg) 'bytes'
-
-    if length(msg) < 80 then do
-      if right(msg, 1) \= '25'x then msg = msg || '25'x
+    if length(msg) < 250 then do
+      if right(msg, 1) \= '25'x then msg = msg'25'x
       SendLength=TCPSEND(#fd, e2a(msg))
 
       if SendLength = -1 then
@@ -219,9 +219,10 @@ send:
         call log 'Client not receiving data' #fd sendlength
     end
     else do /* Larger files needs to be broken up */
-        do x = 1 to length(msg) by 80
-          bytes = substr(msg, x, 80)
-          SendLength=TCPSEND(#fd, e2a(bytes|| '25'x))
+   
+        do y = 1 to length(msg) by 80
+          bytes = substr(msg, y, 80)
+          SendLength=TCPSEND(#fd, e2a(bytes'25'x))
 
           if SendLength = -1 then do
             call log 'Socket Error sending to' #fd sendlength
@@ -294,7 +295,7 @@ return
 argparse:
     parse arg args
     call verbose 'argparse:' args
-    port = 3702 /* Default port */
+    port = 9856 /* Default port */
     timeout = 60 /* Default timeout */
     debug = 0
     call log 'Arguments:' args
@@ -361,9 +362,10 @@ check_job:
 
     if time('s') - t >= timeout then do
       call verbose 'check_job: error: job' jobname '('jobnum') ended not found'
-      call send #fd 'error: job' jobname '('jobnum') ENDED/PURGED not found'
+      call send #fd 'Error: job' jobname '('jobnum') ENDED/PURGED not found'
       return
     end
+    call wait(1000) /* Don't thrash the CPU wait a bit */
 
   end
 
@@ -384,13 +386,13 @@ check_job:
 
   call verbose 'check_job: Processing' _line.0 'MTT entries'
 
-  if full_log = 1 then call send #fd '--- Full Log'
+  if full_log = 1 then call send #fd '--- *JOBLOG* Full Log'
 
   do i=1 to _line.0
 
     if pos('JOB'RIGHT(JOBNUM,5),_line.i) > 0 then do
       if full_log = 1 then do
-        call send #fd _line.i
+        call send #fd '*JOBLOG*' _line.i
       end
 
       if pos('IEFACTRT',_line.i) > 0 then do
@@ -411,7 +413,9 @@ check_job:
       parse var _line.i _jtype =5 _jtime =14 . =18 num =24,
                 name =34 step =44 proc =54 prog retcode
 
-      if _jtype \= '0004' then iterate /* skip error messages */
+      if strip(_jtype) \= '0004' then iterate /* skip error messages */
+      if (strip(num) \= jobnum) then iterate
+      if (strip(name) \= jobname) then iterate
 
       parse var retcode . rcnum /* RC= xxxx or AB xxxx, vs *FLUSH* */
       if length(rcnum) = 0 then rcnum = retcode
@@ -419,6 +423,8 @@ check_job:
       rcnum = retcode
       if pos('RC=',retcode) > 0 then parse var retcode . rcnum
       if pos('AB',retcode) > 0 then parse var retcode . rcnum
+
+
 
       maxcc.cc_stem_count = num','name','step','proc','prog','rcnum
       call verbose 'check_job: parsed line:' maxcc.cc_stem_count
@@ -430,7 +436,7 @@ check_job:
   maxcc.0 = cc_stem_count - 1
   call verbose "Done processing MTT entries"
 
-  if full_log = 1 then call send #fd '--- Done'
+  if full_log = 1 then call send #fd '--- *JOBLOG* Done'
 
   call verbose "Sending" maxcc.0 'result(s)'
 
@@ -447,21 +453,25 @@ wait_for_string:
   parse arg #fd srch_for
   call verbose 'wait_for_string: Waiting for' srch_for 'in MTT'
   call send #fd '--- Waiting' timeout 'seconds for' srch_for
-  MARRAY=SCREATE(4096)
-  /* Search the MTT for the job read message */
-  result = MTTX('R',MARRAY,srch_for)
-  T  = time('S')
-  DO WHILE result = 0
-    result = MTTX('R',MARRAY,srch_for)
-    if time('s') - T >= timeout then do
-      err = 'Error:' "'"srch_for"'" 'not found after' timeout 'seconds'
-      call verbose 'wait_for_string:' err
-      call send #fd err
+  
+  DONE = 0
+  T  = time('s')
+  
+  do while done = 0
+
+    done = mtt_search(srch_for) /* JOBNAME  ENDED */
+
+    call verbose 'seconds:' (time('s') - t) 'timeout' timeout 'found' done
+
+    if time('s') - t >= timeout then do
+      call verbose 'wait_for_string: string: "'srch_for'" not found'
+      call send #fd 'Error: string not found in MTT:' srch_for
       return
     end
+    call wait(1000) /* Don't thrash the CPU wait a bit */
+
   end
   call send #fd '--- DONE'
-  call sfree(marray)
   return
 
 check_user:
@@ -497,7 +507,8 @@ check_user:
       cur_pass = right(cur_pass,length(cur_pass)-1)
     end
 
-    IF CUR_USER = UPPER(username) & CUR_PASS = UPPER(PASSWORD) then do
+    IF CUR_USER = UPPER(username) &,
+       HASHVALUE(CUR_PASS) = UPPER(PASSWORD) then do
       call verbose 'check_user: User and password for' username 'found'
       if GROUP = 'RAKFADM' then do
         attempts = 0
@@ -511,8 +522,8 @@ check_user:
 
   if logon = 0 then do
     call log '('#fd') Access Denied:' username 
-    call send #fd 'Logon Failed: Username/password invalid or user'||,
-                  ' not in appropriate group'
+    call send #fd 'Logon Failed: Username/password invalid or user',
+                  'not in appropriate group'
   end
   return
 
@@ -549,7 +560,7 @@ get_jobnum:
 
   do i=_line.0 to 1 by -1
     call verbose 'get_jobnum: ('i')' _line.i
-    if pos('$HASP100 '||_jname,_line.i)	>	0	then	do
+    if pos('$HASP100 '_jname,_line.i)	>	0	then	do
       call verbose 'get_jobnum: Job' _jname 'found:' _line.i
       parse var _line.i  . . . _jobnum .
       leave
@@ -558,6 +569,12 @@ get_jobnum:
 
   return _jobnum
 
+check_file_size:
+  parse arg file_handler
+  _size = SEEK(file_handler,0,"EOF")
+  if _size > max_file_size then return 1
+  return 0
+
 
 failed_logon:
     parse var #fd command
@@ -565,10 +582,11 @@ failed_logon:
     call verbose 'failed_logon:' #fd command '- access denied'
     call send #fd 'Access Denied'
     call send #fd 'Please /LOGON to continue'
+    return
 
 check_logon:
   parse var #fd command
-  call verbose "check_logon: Checking if client is logged in"
+  call verbose "check_logon: "#fd" Checking if client is logged in"
   if logon = 0 then do
     call failed_logon #fd command
     return 0
@@ -587,3 +605,260 @@ verbose:
   if debug = 1 then say time('l') str
   return
 
+/* ---------------------------------------------------------------------
+ * To avoid using RXLIB we include various RXLIB members here here 
+ * ---------------------------------------------------------------------
+ */
+
+/* ---------------------------------------------------------------------
+ * TCP Server Facility
+ *     This is the generic TCP Server module which handles all events
+ *     The user specific handling of the events is performed
+ *     by a call-back to the calling REXX
+ *         connect
+ *         receive
+ *         close
+ *         stop
+ * ---------------------------------------------------------------------
+ */
+tcpsf:
+  parse arg port,timeout,svrname,MSLV
+  if timeout=''  then timeout=60
+  if svrname='' then svrname='DUMMY'
+  if mslv='' then mslv=0
+  else if mslv='NOMSG' then mslv=12
+  else if mslv='ERROR' then mslv=8
+  else if mslv='WARN'  then mslv=4
+  else if mslv='INFO'  then mslv=0
+  tcpmsg.0='..BASIC'
+  tcpmsg.1='  INFO '
+  tcpmsg.4='**WARN '
+  tcpmsg.8='++ERROR'
+  maxrc=0
+  tcpstarted=0
+  if datatype(port)<>'NUM' then do
+     call _#SVRMSG 8,"Port Number missing or invalid "port
+     return 8
+  end
+  call tcpinit()
+  call _#SVRMSG 0,'TCP Server start at Port: 'port
+  call _#SVRMSG 1,'TCP Time out set to     : 'timeout' seconds'
+  rc=tcpserve(port)
+  if rc <> 0 then do
+     tcpstarted=1
+     call _#SVRMSG 8,"TCP Server start ended with rc: "rc
+     return 8
+  end
+  call _#SVRMSG 1,'TCP Server has been started'
+  if nomsg=0 then call wto 'TCP Server has been started, port 'port
+  call eventhandler
+  call _#SVRMSG 1,"TCP Server will be closed"
+  if tcpStarted=1 then call tcpTerm()
+  call _#SVRMSG 1,"TCP Server has been closed"
+  if nomsg=0 then call wto 'TCP Server 'svrname' has been closed, port 'port
+return 0
+/* ---------------------------------------------------------------------
+ * TCP Event Handler
+ * ---------------------------------------------------------------------
+ */
+EventHandler:
+  stopServer=0
+  do forever
+     event = tcpwait(timeout)
+     if event <= 0 then call eventerror event
+     select
+        when event = #receive then call _#receive _fd
+        when event = #connect then call _#connect _fd
+        when event = #timeout then call _#timeout
+        when event = #close   then call _#close _fd
+        when event = #stop    then leave
+        when event = #error   then call eventError
+        otherwise  call eventError
+     end
+     if stopServer=1 then leave
+  end
+  call _#stop     /* is /F console cmd */
+return
+/* ---------------------------------------------------------------------
+ * Time out
+ * ---------------------------------------------------------------------
+ */
+_#timeout:
+  parse arg #fd
+  newtimeout=0
+  rrc=TCPtimeout()
+  if datatype(newtimeout)='NUM' & newtimeout>0 then do
+     timeout=newtimeout
+     call _#SVRMSG 1,'Timeout set to 'timeout
+     if nomsg=0 then call wto 'Timeout set to 'timeout
+  end
+  if rrc=0 then return 0
+  if rrc=8 then stopServer=1
+return 0
+/* ---------------------------------------------------------------------
+ * Connect
+ * ---------------------------------------------------------------------
+ */
+_#connect:
+  parse arg #fd
+  rrc=TCPconnect(#fd)
+  if rrc=0 then return 0
+  if rrc=4 then call _#close #fd
+  if rrc=8 then stopServer=1
+return 0
+/* ---------------------------------------------------------------------
+ * Receive Input
+ * ---------------------------------------------------------------------
+ */
+_#receive:
+  parse arg #fd
+  dlen=TCPReceive(#fd)   /* Anzahl Byte */
+  adata=a2e(_data)
+/*  call _#SVRMSG 1,'Data from Client ' */
+  if pos('/CANCEL',_data)>0 then StopServer=1 /* shut down server */
+  if pos('/CANCEL',adata)>0 then StopServer=1 /* shut down server */
+  if pos('/QUIT',_data)>0 | pos('/QUIT',adata)>0 then do
+     call _#close #fd
+     return 0
+  end
+  newtimeout=0
+  rrc=TCPData(#fd,_data,adata)
+  if datatype(newtimeout)='NUM' & newtimeout>0 then do
+     timeout=newtimeout
+     call _#SVRMSG 1,'Timeout set to 'timeout
+     if nomsg=0 then call wto 'Timeout set to 'timeout
+  end
+  if rrc=0 then return 0
+  if rrc=4 then call _#close #fd
+  if rrc=8 then stopServer=1
+return 0
+/* ---------------------------------------------------------------------
+ * Close Client
+ * ---------------------------------------------------------------------
+ */
+_#close:
+  parse arg #fd
+  call _#SVRMSG 1,"close event from client Socket "#fd
+  if tcpclose(#fd)=0 then call _#SVRMSG 1,"Client Socket "#fd" closed"
+     else call _#SVRMSG 8,"Client Socket "#fd" can't be closed"
+  rrc=TCPcloseS(#fd)   /* handle socket close  */
+  if rrc=0 then return 0
+  if rrc=8 then stopServer=1
+return 0
+/* ---------------------------------------------------------------------
+ * Shut Down
+ * ---------------------------------------------------------------------
+ */
+_#stop:
+  call _#SVRMSG 1,"shut down event from client Socket "_fd
+  call tcpTerm()
+  call TCPshutdown   /* User's shut down processing */
+return
+/* ---------------------------------------------------------------------
+ * Event Error
+ * ---------------------------------------------------------------------
+ */
+eventError:
+  if arg(1)<>'' then CALL _#SVRMSG 8,"TCPWait() error: "event
+  else CALL _#SVRMSG 8,'TCP error: 'event
+  call tcpTerm()
+return 8
+/* ---------------------------------------------------------------------
+ * Set Message and Error Code
+ * ---------------------------------------------------------------------
+ */
+_#SVRMSG:
+parse arg _mslv
+  if _mslv>=mslv | _mslv=0 then do           /* 0 is essential message */
+     if _FD='_FD' then _fd=' '
+     say time('L')' 'tcpmsg._mslv' 'port' 'right(_fd,4)' 'svrname' 'arg(2)
+     call log tcpmsg._mslv' 'port' 'right(_fd,4)' 'svrname' 'arg(2)
+  end
+  if _mslv>maxrc then maxrc=_mslv
+return _mslv
+
+/* -------------------------------------------------------------------
+ * Perform Console command and return associated Master TT Entries
+ * ................................. Created by PeterJ on 19. May 2021
+ * -------------------------------------------------------------------
+ */
+rxConsol: procedure expose console.
+  parse upper arg cmd,wait4
+/* .....  Send operator command  ............................ */
+  call console(cmd)
+  if datatype(wait4)<>'NUM' then wait4=300
+  call wait(wait4)
+  jobnum=MVSvar('JOBNUMBER')
+  if arg(3)='STEM' then return console_slow()
+  return console_fast()
+/* -------------------------------------------------------------------
+ * Running Console in ARRAY mode is much faster
+ * -------------------------------------------------------------------
+ */
+console_fast:
+  jnum=substr(jobnum,4)+0
+  if __sysvar('SYSTSO')=1 then jbn='TSU'
+     else jbn='JOB'
+  jobn=jbn||right(jnum,5)
+  cnum=2
+/* .....  Check Trace Table for result  ..................... */
+  mtt_sarray=screate(2000)
+  _lines=mttx(1,mtt_sarray)     /* 1: build new, array is: mtt_sarray  */
+  ssi=ssearch(mtt_sarray,jobn)
+  _line=sget(mtt_sarray,ssi)
+  if pos(cmd,_line)==0 then return 8
+  console.1=_line
+  _line=sget(mtt_sarray,ssi-1)
+  console.2=_line
+  trnum=lastword(_line)
+  do k=ssi-2 to 1 by -1
+     _line=sget(mtt_sarray,k)
+     if word(_line,1)<>trnum then iterate
+     cnum=cnum+1
+     console.cnum=_line
+  end
+  console.0=cnum
+return 0
+/* -------------------------------------------------------------------
+ * Running Console in STEM mode is slower
+ * -------------------------------------------------------------------
+ */
+console_slow:
+  console.0=0
+/* .....  Check Trace Table for result  ..................... */
+  call mtt()
+  if _findTTEntry()<0 then return 8
+/* .....  Pick up all TT entries after entry ................ */
+  console.1=_line._tti
+  cnum=1
+  do k=_tti+1 to _line.0
+     if strip(_line.k)='' then iterate
+     if cnum=1 then do
+ /*  0000 10.54.40 TSU 4344
+     0000 10.54.40
+  */
+        cnum=cnum+1
+        console.cnum=_line.k
+        trnum=lastword(_line.k)
+        if datatype(trnum)<>'NUM' then trnum=-1
+        iterate
+     end
+     if trnum>0 then if word(_line.k,1)<>trnum then iterate
+     cnum=cnum+1
+     console.cnum=_line.k
+  end
+  console.0=cnum
+return 0
+/* -------------------------------------------------------------------
+ * Find TT Entry with the sent operator command
+ * -------------------------------------------------------------------
+ */
+_findTTEntry:
+/* ...  Find job-/tso number which requested the command  ... */
+  do _tti=_line.0 to max(1,_line.0-100) by -1
+     jobn=translate(substr(_line._tti,15,8),'0',' ')
+     if jobn<>jobnum then iterate
+     if substr(_line._tti,25)=cmd then leave
+  end
+  if jobn<>jobnum then return -8
+return _tti

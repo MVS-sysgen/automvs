@@ -10,7 +10,7 @@ MVS Automation Python Library
     TK4-/TK5 for those MVS3.8j.
 """
 
-__version__ = '0.1.0'
+__version__ = '0.2.0'
 __author__ = 'Philip Young'
 __license__ = "GPL"
 

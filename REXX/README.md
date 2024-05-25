@@ -14,12 +14,14 @@ This script takes 3 optional arguments:
 
 :warning: using the DEBUG option can create potentially thousands
 of lines either in the TSO terminal or in JES2. Only use it if you're
-making a bug report or tring to troubleshoot an issue.
+making a bug report or trying to troubleshoot an issue.
 
 ## Requirements
 
 1. A running TK4- or TK5 mvs
-2. TCPIP support which requires running the following hercules command before IPL: `facility enable HERC_TCPIP_EXTENSION` and `facility enable HERC_TCPIP_PROB_STATE`
+2. TCPIP support which requires running the following hercules command 
+   before IPL: `facility enable HERC_TCPIP_EXTENSION` and 
+   `facility enable HERC_TCPIP_PROB_STATE`
 3. BREXX V2R5M3 or greater
 
 ## Instalation
@@ -38,8 +40,11 @@ If you place AUTOMVS.rexx in a dataset in `SYSEXEC` (on TK5 these are
 In this folder is a script called `UPLOAD.sh`. If you're running TK5, or 
 you've already created `SYS2.EXEC` on TK4- you can run this script in this
 folder to upload both AUTOMVS.rexx (to `SYS2.EXEC`) and AUTOMVS.jcl (to
-`SYS2.PROCLIB`) with the following command: 
-`./UPLOAD.sh|ncat -vw1 ip.or.hostname.of.your.mvs`
+`SYS2.PROCLIB`) with the following commands:
+
+1. In the hercules console: `CODEPAGE  819/1047` Note: You only need to do 
+   this once to install the scripts
+2. In this REXX folder: `./UPLOAD.sh|ncat -vw1 ip.or.hostname.of.your.mvs 3505`
 
 ## Started Task
 

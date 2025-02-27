@@ -341,7 +341,8 @@ class mvs:
 
          jobname (str): name of the job to check from the printer file output
          steps_cc (dict): pairs of step names and expected CC. This should be used
-            if you expect a specific step to have a return code other than zero.
+            if you expect a specific step to have a return code other than zero. Procs
+            are now supported, use PROCNAME.STEP
          printer_file (str): location of the printer file from hercules that
             contains the job output.
          ignore (bool): tells the function to ignore failed steps
@@ -357,6 +358,7 @@ class mvs:
 
       logmsg = '[MAXCC] Jobname: {:<8} Procname: {:<8} Stepname: {:<8} Exit Code: {:<8}'
 
+      procname =''
       with open(printer_file, 'r', errors='ignore') as f:
           for line in f.readlines():
               if 'IEF142I' in line and jobname in line:
@@ -386,12 +388,15 @@ class mvs:
                                         "exitcode": j[11]
                                     }
                       stepname = j[3]
+                      procname = j[2]
                       maxcc=j[11]
 
                   self.logger.debug(log)
                   job_status.append(step_status)
 
-                  if stepname in steps_cc:
+                  if f"{procname}.{stepname}" in steps_cc:
+                      expected_cc = steps_cc[f"{procname}.{stepname}"]
+                  elif stepname in steps_cc:
                       expected_cc = steps_cc[stepname]
                   else:
                       expected_cc = '0000'
@@ -412,7 +417,6 @@ class mvs:
           raise ValueError(error)
         
       return(job_status)
-
 
     def reset_hercules(self,clpa=False):
         self.logger.debug('[AUTOMATION: MVS/CE] Restarting hercules')
